@@ -2,6 +2,7 @@ import json
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
 
+from src.config import SUPABASE_URL, SUPABASE_STORAGE_BUCKET
 from src.db import get_connection
 from src.models import ChatQueryRequest
 from src.security import get_current_user
@@ -11,6 +12,17 @@ from src.services.llm import stream_rag_response
 router = APIRouter(prefix="/api/chat", tags=["Chat"])
 
 
+def build_public_pdf_url(storage_path: str, page_number: int | None = None) -> str:
+    """Constructs a direct Supabase public object URL with an Adobe #page anchor."""
+    base_url = SUPABASE_URL.rstrip("/")
+    bucket = SUPABASE_STORAGE_BUCKET.strip("/")
+    path = storage_path.lstrip("/")
+    url = f"{base_url}/storage/v1/object/public/{bucket}/{path}"
+    if page_number:
+        url += f"#page={page_number}"
+    return url
+
+
 @router.post("/stream")
 def query_academic_rag_stream(
     payload: ChatQueryRequest,
@@ -18,7 +30,7 @@ def query_academic_rag_stream(
 ):
     """
     Streams RAG response using Server-Sent Events (SSE).
-    Retrieves Top-5 relevant chunks via pgvector, then yields tokens as they are generated.
+    Retrieves Top-5 relevant chunks joined with parent document metadata for direct PDF linking.
     """
     clean_course_id = payload.course_id.strip().upper()
     user_query = payload.query.strip()
@@ -39,19 +51,22 @@ def query_academic_rag_stream(
             detail=f"Embedding generation failed: {str(e)}"
         )
 
-    # 2. Similarity search in pgvector
+    # 2. Similarity search in pgvector with JOIN to documents table
     with get_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
                 SELECT 
-                    doc_type, 
-                    page_number, 
-                    content, 
-                    1 - (embedding <=> %s::vector) AS similarity
-                FROM document_chunks
-                WHERE course_id = %s
-                ORDER BY embedding <=> %s::vector ASC
+                    dc.doc_type, 
+                    dc.page_number, 
+                    dc.content, 
+                    1 - (dc.embedding <=> %s::vector) AS similarity,
+                    d.filename,
+                    d.storage_path
+                FROM document_chunks dc
+                JOIN documents d ON dc.document_id = d.id
+                WHERE dc.course_id = %s
+                ORDER BY dc.embedding <=> %s::vector ASC
                 LIMIT 5;
                 """,
                 (vector_str, clean_course_id, vector_str)
@@ -59,7 +74,6 @@ def query_academic_rag_stream(
             rows = cur.fetchall()
 
     if not rows:
-        # Return an SSE stream with an immediate empty message
         def empty_generator():
             msg = json.dumps({
                 "type": "token",
@@ -70,19 +84,24 @@ def query_academic_rag_stream(
 
         return StreamingResponse(empty_generator(), media_type="text/event-stream")
 
-    sources = [
-        {
-            "doc_type": r[0],
-            "page_number": r[1],
+    sources = []
+    for r in rows:
+        page_num = r[1]
+        storage_path = r[5] or ""
+        pdf_url = build_public_pdf_url(storage_path, page_num) if storage_path else None
+
+        sources.append({
+            "doc_type": r[0] or "Document",
+            "page_number": page_num,
             "content": r[2],
-            "similarity": round(float(r[3]), 4)
-        }
-        for r in rows
-    ]
+            "similarity": round(float(r[3]), 4),
+            "filename": r[4] or "Document.pdf",
+            "pdf_url": pdf_url
+        })
 
     history = [m.model_dump() for m in payload.history] if payload.history else None
 
-    # 3. Return StreamingResponse wrapping our generator
+    # 3. Stream generator response
     return StreamingResponse(
         stream_rag_response(
             query=user_query,
@@ -93,6 +112,6 @@ def query_academic_rag_stream(
         headers={
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
-            "X-Accel-Buffering": "no"  # Prevents Nginx/proxies from buffering chunks
+            "X-Accel-Buffering": "no"
         }
     )

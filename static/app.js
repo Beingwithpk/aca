@@ -366,6 +366,40 @@ async function handlePdfUpload() {
   }
 }
 
+// --- PDF Modal Viewer Functions ---
+function openPdfModal(url, filename, pageNumber) {
+  if (!url) {
+    alert("PDF link unavailable for this document.");
+    return;
+  }
+  const modal = document.getElementById("pdfViewerModal");
+  const title = document.getElementById("pdfViewerTitle");
+  const subtitle = document.getElementById("pdfViewerSubtitle");
+  const externalLink = document.getElementById("pdfViewerExternalLink");
+  const frame = document.getElementById("pdfFrame");
+
+  title.textContent = filename || "Course Material";
+  subtitle.textContent = pageNumber ? `Viewing Page ${pageNumber}` : "Document Preview";
+  externalLink.href = url;
+  frame.src = url;
+
+  modal.classList.remove("hidden");
+}
+
+function closePdfModal() {
+  const modal = document.getElementById("pdfViewerModal");
+  const frame = document.getElementById("pdfFrame");
+  frame.src = "about:blank"; // Stop memory consumption
+  modal.classList.add("hidden");
+}
+
+// Close modal on Escape key press
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") {
+    closePdfModal();
+  }
+});
+
 // --- Chat ---
 // --- Streaming Chat Implementation ---
 // --- Streaming Chat Implementation with Markdown & KaTeX Math Rendering ---
@@ -482,14 +516,44 @@ async function handleSendMessage(e) {
             if (parsed.data && parsed.data.length > 0) {
               sourcesEl.classList.remove("hidden");
               sourcesEl.innerHTML = `
-                <p class="font-semibold text-slate-400 uppercase tracking-wider">Grounding Sources</p>
-                ${parsed.data.map(s => `
-                  <div class="text-slate-400">
-                    <span class="text-indigo-400">[${s.doc_type} | Page ${s.page_number}]</span>
-                    <span>${escapeHtml(s.content.substring(0, 110))}...</span>
-                    <span class="text-slate-500 font-mono">(${Math.round(s.similarity * 100)}% match)</span>
-                  </div>
-                `).join("")}
+                <div class="flex items-center space-x-2 mb-2">
+                  <i class="fa-solid fa-bookmark text-indigo-400 text-xs"></i>
+                  <p class="font-semibold text-slate-300 uppercase tracking-wider text-[10px]">Verified Grounding Sources</p>
+                </div>
+                <div class="grid grid-cols-1 gap-2">
+                  ${parsed.data.map(s => {
+                    const cleanFileName = escapeHtml(s.filename || "Document.pdf");
+                    const safeUrl = s.pdf_url ? encodeURI(s.pdf_url) : "";
+                    const page = s.page_number || 1;
+                    return `
+                      <div class="bg-slate-950/80 border border-slate-800 rounded-xl p-2.5 flex items-start justify-between gap-3 hover:border-slate-700 transition">
+                        <div class="flex-1 min-w-0">
+                          <div class="flex items-center space-x-2 text-[11px] mb-1">
+                            <span class="px-1.5 py-0.5 rounded bg-indigo-950 text-indigo-300 border border-indigo-800/60 font-medium">
+                              ${escapeHtml(s.doc_type)}
+                            </span>
+                            <span class="text-slate-400 truncate max-w-[180px]">${cleanFileName}</span>
+                            <span class="text-slate-500 font-mono text-[10px]">• ${Math.round(s.similarity * 100)}% match</span>
+                          </div>
+                          <p class="text-slate-400 text-xs line-clamp-2 italic leading-relaxed">
+                            "${escapeHtml(s.content.substring(0, 140))}..."
+                          </p>
+                        </div>
+                        ${s.pdf_url ? `
+                          <button 
+                            type="button" 
+                            onclick="openPdfModal('${safeUrl}', '${cleanFileName}', ${page})" 
+                            class="shrink-0 mt-0.5 px-2.5 py-1.5 bg-indigo-600/20 hover:bg-indigo-600 text-indigo-300 hover:text-white border border-indigo-500/30 rounded-lg text-xs font-medium flex items-center space-x-1.5 transition"
+                            title="Open exact cited page"
+                          >
+                            <i class="fa-solid fa-book-open text-[10px]"></i>
+                            <span>Page ${page}</span>
+                          </button>
+                        ` : ''}
+                      </div>
+                    `;
+                  }).join("")}
+                </div>
               `;
             }
           } else if (parsed.type === "token") {
