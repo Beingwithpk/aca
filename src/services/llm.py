@@ -38,11 +38,14 @@ def stream_rag_response(
         formatted_context += f"--- Source {idx} [{doc_type} | Page {page}] ---\n{content}\n\n"
 
     system_prompt = (
-        "You are an academic AI teaching assistant. Answer the student's question accurately, "
-        "concisely, and thoroughly based strictly on the provided course material sources.\n"
-        "Cite the sources or page numbers whenever applicable. If the provided context does not contain "
-        "sufficient information to answer the question, state that clearly rather than hallucinating."
-    )
+    "You are an academic AI teaching assistant. Answer the student's question accurately "
+    "and rigorously based strictly on the provided course material sources.\n"
+    "Guidelines:\n"
+    "1. Distinguish carefully between distinct database definitions (e.g., Functional Dependencies in BCNF vs Multivalued Dependencies in 4NF).\n"
+    "2. If multiple definitions appear in the sources, present them clearly with their corresponding normal form.\n"
+    "3. Never mix rules from different normal forms or theorems.\n"
+    "4. If the provided sources do not explicitly cover the answer, state that clearly."
+)
 
     messages = [{"role": "system", "content": system_prompt}]
 

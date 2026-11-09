@@ -368,6 +368,7 @@ async function handlePdfUpload() {
 
 // --- Chat ---
 // --- Streaming Chat Implementation ---
+// --- Streaming Chat Implementation with Markdown & KaTeX Math Rendering ---
 async function handleSendMessage(e) {
   e.preventDefault();
   const input = document.getElementById("chatInput");
@@ -400,7 +401,7 @@ async function handleSendMessage(e) {
         <i class="fa-solid fa-robot text-sm"></i>
       </div>
       <div class="bg-slate-800/60 border border-slate-700/60 rounded-2xl p-4 text-sm max-w-2xl leading-relaxed text-slate-100 flex-1">
-        <div class="chat-content whitespace-pre-wrap"><i class="fa-solid fa-spinner fa-spin mr-2 text-indigo-400"></i>Retrieving course notes...</div>
+        <div class="chat-content prose prose-invert max-w-none text-sm leading-relaxed"><i class="fa-solid fa-spinner fa-spin mr-2 text-indigo-400"></i>Retrieving course notes...</div>
         <div class="chat-sources mt-3 pt-3 border-t border-slate-700/60 text-[11px] space-y-1 hidden"></div>
       </div>
     </div>
@@ -430,23 +431,39 @@ async function handleSendMessage(e) {
       throw new Error(err.detail || "Streaming request failed");
     }
 
-    // 3. Attach Reader and Decoder
     const reader = response.body.getReader();
     const decoder = new TextDecoder("utf-8");
     let accumulatedText = "";
     let buffer = "";
     let isFirstToken = true;
 
+    // Helper: Safely renders Markdown and math formulas into the container
+    const finalizeFormatting = () => {
+      if (window.marked) {
+        contentEl.innerHTML = marked.parse(accumulatedText);
+      } else {
+        contentEl.textContent = accumulatedText;
+      }
+      if (window.renderMathInElement) {
+        renderMathInElement(contentEl, {
+          delimiters: [
+            { left: "$$", right: "$$", display: true },
+            { left: "$", right: "$", display: false },
+            { left: "\\[", right: "\\]", display: true },
+            { left: "\\(", right: "\\)", display: false }
+          ],
+          throwOnError: false
+        });
+      }
+    };
+
     while (true) {
       const { value, done } = await reader.read();
       if (done) break;
 
-      // Decode the binary stream chunk
       buffer += decoder.decode(value, { stream: true });
-
-      // SSE chunks are separated by double newlines \n\n
       const lines = buffer.split("\n\n");
-      buffer = lines.pop(); // Keep incomplete trailing fragment in buffer
+      buffer = lines.pop(); // Retain incomplete fragment
 
       for (const line of lines) {
         const trimmed = line.trim();
@@ -454,6 +471,7 @@ async function handleSendMessage(e) {
 
         const rawData = trimmed.replace("data:", "").trim();
         if (rawData === "[DONE]") {
+          finalizeFormatting();
           break;
         }
 
@@ -461,7 +479,6 @@ async function handleSendMessage(e) {
           const parsed = JSON.parse(rawData);
 
           if (parsed.type === "sources") {
-            // Render source citations immediately
             if (parsed.data && parsed.data.length > 0) {
               sourcesEl.classList.remove("hidden");
               sourcesEl.innerHTML = `
@@ -477,10 +494,11 @@ async function handleSendMessage(e) {
             }
           } else if (parsed.type === "token") {
             if (isFirstToken) {
-              contentEl.innerHTML = ""; // Clear the loading spinner
+              contentEl.innerHTML = "";
               isFirstToken = false;
             }
             accumulatedText += parsed.data;
+            // Plain text during live streaming for raw speed
             contentEl.textContent = accumulatedText;
             messagesBox.scrollTop = messagesBox.scrollHeight;
           } else if (parsed.type === "error") {
@@ -491,6 +509,10 @@ async function handleSendMessage(e) {
         }
       }
     }
+
+    // Ensure Markdown & KaTeX render even if [DONE] was dropped by the network
+    finalizeFormatting();
+
   } catch (err) {
     contentEl.innerHTML = `<span class="text-rose-400">Failed: ${escapeHtml(err.message)}</span>`;
   } finally {
@@ -498,7 +520,6 @@ async function handleSendMessage(e) {
     messagesBox.scrollTop = messagesBox.scrollHeight;
   }
 }
-
 // --- Attendance Roster ---
 async function loadRoster() {
   const branch = document.getElementById("attBranch").value;
