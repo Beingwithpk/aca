@@ -1,0 +1,69 @@
+# --- Environment Variables & Secrets (CRITICAL) ---
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# --- Python Virtual Environments ---
+myenv/
+.venv/
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# --- Python Bytecode & Cache ---
+__pycache__/
+*.py[cod]
+*\$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# --- Hugging Face & Sentence Transformers Local Cache ---
+models/
+.cache/
+huggingface/
+torch/
+
+# --- Uploads & Temporary Local PDFs ---
+uploads/
+temp/
+*.pdf
+
+# --- Database / Vector Local Dumps ---
+*.sqlite
+*.sqlite3
+*.db
+*.dump
+
+# --- IDEs & System Files ---
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- Logs ---
+*.log
+logs/

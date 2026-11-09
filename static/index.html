@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Academic RAG Core</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col font-sans">
+
+  <!-- Header -->
+  <header class="border-b border-slate-800 bg-slate-900/80 backdrop-blur sticky top-0 z-40 px-6 py-4 flex items-center justify-between">
+    <div class="flex items-center space-x-3">
+      <div class="w-10 h-10 rounded-xl bg-indigo-600 flex items-center justify-center font-bold text-lg shadow-lg shadow-indigo-500/20">
+        <i class="fa-solid fa-graduation-cap"></i>
+      </div>
+      <div>
+        <h1 class="text-lg font-bold tracking-tight text-white">Academic RAG Core</h1>
+        <p class="text-xs text-slate-400">IIIT Bhopal Course Intelligence & Roster System</p>
+      </div>
+    </div>
+
+    <!-- User / Auth Actions -->
+    <div id="authActions" class="flex items-center space-x-3">
+      <!-- Injected dynamically via app.js -->
+    </div>
+  </header>
+
+  <!-- Main Navigation Tabs -->
+  <nav class="border-b border-slate-800 bg-slate-900/40 px-6">
+    <div class="flex space-x-8 text-sm font-medium">
+      <button id="tabChat" onclick="switchTab('chat')" class="py-3 border-b-2 border-indigo-500 text-indigo-400 flex items-center space-x-2">
+        <i class="fa-solid fa-comments"></i>
+        <span>Academic Assistant</span>
+      </button>
+      <button id="tabAttendance" onclick="switchTab('attendance')" class="py-3 border-b-2 border-transparent text-slate-400 hover:text-slate-200 flex items-center space-x-2 hidden">
+        <i class="fa-solid fa-clipboard-user"></i>
+        <span>Attendance Roster</span>
+      </button>
+      <button id="tabCourses" onclick="switchTab('courses')" class="py-3 border-b-2 border-transparent text-slate-400 hover:text-slate-200 flex items-center space-x-2 hidden">
+        <i class="fa-solid fa-book"></i>
+        <span>Manage Subjects</span>
+      </button>
+    </div>
+  </nav>
+
+  <!-- Main Viewports -->
+  <main class="flex-1 p-6 max-w-7xl w-full mx-auto">
+
+    <!-- TAB 1: Chat & PDF Ingestion -->
+    <section id="viewChat" class="grid grid-cols-1 lg:grid-cols-3 gap-6 h-[calc(100vh-180px)]">
+      
+      <!-- Left Panel: Course Selection & Material Ingestion -->
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 flex flex-col space-y-5">
+        <div>
+          <label class="block text-xs uppercase font-semibold text-slate-400 mb-2">Select Active Subject</label>
+          <select id="courseSelect" onchange="onCourseSelected()" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-indigo-500">
+            <option value="">-- Choose Subject --</option>
+          </select>
+        </div>
+
+        <!-- Ingestion Box (Faculty/Admin only) -->
+        <div id="uploadContainer" class="border border-dashed border-slate-700 bg-slate-950/60 rounded-xl p-4 flex flex-col space-y-3 hidden">
+          <div class="flex items-center justify-between">
+            <span class="text-xs font-semibold uppercase text-slate-400">Ingest Material</span>
+            <span class="text-[10px] bg-indigo-900/60 text-indigo-300 px-2 py-0.5 rounded font-mono">PDF Only</span>
+          </div>
+          
+          <select id="docTypeSelect" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-300">
+            <option value="Lecture Notes">Lecture Notes</option>
+            <option value="Syllabus">Syllabus</option>
+            <option value="Previous Year Questions">Previous Year Questions</option>
+            <option value="Reference Book">Reference Book</option>
+          </select>
+
+          <input type="file" id="pdfFileInput" accept=".pdf" class="text-xs text-slate-400 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-indigo-600 file:text-white hover:file:bg-indigo-500 cursor-pointer" />
+
+          <button id="uploadBtn" onclick="handlePdfUpload()" class="w-full py-2 bg-indigo-600 hover:bg-indigo-500 text-xs font-medium rounded-lg transition-colors flex items-center justify-center space-x-2">
+            <i class="fa-solid fa-cloud-arrow-up"></i>
+            <span>Vectorize & Index Material</span>
+          </button>
+          <p id="uploadStatus" class="text-[11px] text-center text-slate-400 hidden"></p>
+        </div>
+
+        <!-- Ingested Documents List -->
+        <div class="flex-1 flex flex-col min-h-0">
+          <span class="text-xs uppercase font-semibold text-slate-400 mb-2">Subject Knowledge Base</span>
+          <div id="documentsList" class="flex-1 overflow-y-auto space-y-2 pr-1 text-xs text-slate-400">
+            <p class="text-slate-500 italic">Select a subject to view indexed documents.</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right Panel: Conversation Stream -->
+      <div class="lg:col-span-2 bg-slate-900 border border-slate-800 rounded-2xl flex flex-col overflow-hidden">
+        
+        <!-- Messages Box -->
+        <div id="chatMessages" class="flex-1 p-5 overflow-y-auto space-y-4">
+          <div class="flex items-start space-x-3">
+            <div class="w-8 h-8 rounded-lg bg-indigo-600/30 text-indigo-400 flex items-center justify-center shrink-0">
+              <i class="fa-solid fa-robot text-sm"></i>
+            </div>
+            <div class="bg-slate-800/60 border border-slate-700/60 rounded-2xl p-4 text-sm max-w-2xl leading-relaxed">
+              Hello! Select an enrolled subject on the left and ask questions regarding lecture notes, pyqs, or syllabus definitions. All answers are grounded in vectorized course material.
+            </div>
+          </div>
+        </div>
+
+        <!-- Chat Input Bar -->
+        <div class="p-4 bg-slate-950/60 border-t border-slate-800">
+          <form onsubmit="handleSendMessage(event)" class="flex space-x-3">
+            <input type="text" id="chatInput" placeholder="Ask about concepts, exam patterns, or chapter summaries..." class="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-indigo-500 text-slate-100" />
+            <button type="submit" id="sendBtn" class="px-5 py-3 bg-indigo-600 hover:bg-indigo-500 font-medium text-sm rounded-xl transition flex items-center space-x-2">
+              <span>Send</span>
+              <i class="fa-solid fa-arrow-up"></i>
+            </button>
+          </form>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 2: Attendance Roster -->
+    <section id="viewAttendance" class="bg-slate-900 border border-slate-800 rounded-2xl p-6 hidden">
+      <div class="flex flex-wrap items-end justify-between gap-4 pb-6 border-b border-slate-800">
+        <div class="flex flex-wrap items-center gap-4">
+          <div>
+            <label class="block text-xs uppercase font-semibold text-slate-400 mb-1.5">Branch</label>
+            <input type="text" id="attBranch" value="CSE" class="bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-sm uppercase w-32 focus:outline-none focus:border-indigo-500" />
+          </div>
+          <div>
+            <label class="block text-xs uppercase font-semibold text-slate-400 mb-1.5">Subject</label>
+            <select id="attCourseSelect" class="bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-indigo-500">
+              <!-- Dynamically populated -->
+            </select>
+          </div>
+          <div>
+            <label class="block text-xs uppercase font-semibold text-slate-400 mb-1.5">Date</label>
+            <input type="date" id="attDate" class="bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-indigo-500" />
+          </div>
+          <button onclick="loadRoster()" class="py-2.5 px-4 bg-slate-800 hover:bg-slate-700 text-xs font-semibold rounded-xl mt-auto">
+            Load Class Roster
+          </button>
+        </div>
+
+        <button onclick="saveAttendance()" class="py-2.5 px-5 bg-indigo-600 hover:bg-indigo-500 text-xs font-semibold rounded-xl flex items-center space-x-2">
+          <i class="fa-solid fa-check"></i>
+          <span>Save Attendance</span>
+        </button>
+      </div>
+
+      <!-- Roster Table -->
+      <div class="mt-6 overflow-x-auto">
+        <table class="w-full text-left text-sm">
+          <thead>
+            <tr class="text-xs uppercase text-slate-400 border-b border-slate-800 pb-3">
+              <th class="py-3 px-4">Scholar No.</th>
+              <th class="py-3 px-4">Student Name</th>
+              <th class="py-3 px-4">Email</th>
+              <th class="py-3 px-4 text-center">Status Toggle</th>
+            </tr>
+          </thead>
+          <tbody id="rosterTbody" class="divide-y divide-slate-800/60">
+            <tr>
+              <td colspan="4" class="py-8 text-center text-slate-500 italic">Click "Load Class Roster" to view enrolled students.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- TAB 3: Manage Subjects (Admin) -->
+    <section id="viewCourses" class="bg-slate-900 border border-slate-800 rounded-2xl p-6 hidden">
+      <div class="max-w-xl mb-8">
+        <h3 class="text-base font-bold text-white mb-2">Register New Course</h3>
+        <p class="text-xs text-slate-400 mb-4">Add subject codes to permit document indexing and student queries.</p>
+        <form onsubmit="handleCreateCourse(event)" class="grid grid-cols-3 gap-3">
+          <input type="text" id="newCourseCode" placeholder="Code (e.g. CSE3003)" required class="bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-sm uppercase focus:outline-none focus:border-indigo-500" />
+          <input type="text" id="newCourseTitle" placeholder="Title (e.g. Operating Systems)" required class="bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-indigo-500" />
+          <div class="flex space-x-2">
+            <input type="number" id="newCourseSem" value="5" min="1" max="8" class="bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-sm w-20 focus:outline-none focus:border-indigo-500" />
+            <button type="submit" class="flex-1 bg-indigo-600 hover:bg-indigo-500 text-xs font-semibold rounded-xl">Add</button>
+          </div>
+        </form>
+      </div>
+
+      <h3 class="text-xs uppercase font-semibold text-slate-400 mb-3">Active Subjects Catalog</h3>
+      <div id="adminCoursesList" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <!-- Rendered dynamically -->
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Auth Modal -->
+  <div id="authModal" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+    <div class="bg-slate-900 border border-slate-800 rounded-2xl max-w-md w-full p-6 shadow-2xl relative">
+      <button onclick="closeAuthModal()" class="absolute top-4 right-4 text-slate-400 hover:text-white">
+        <i class="fa-solid fa-xmark"></i>
+      </button>
+
+      <div class="flex border-b border-slate-800 mb-5">
+        <button id="modalTabLogin" onclick="toggleAuthMode('login')" class="flex-1 pb-3 text-sm font-semibold border-b-2 border-indigo-500 text-indigo-400">Sign In</button>
+        <button id="modalTabSignup" onclick="toggleAuthMode('signup')" class="flex-1 pb-3 text-sm font-semibold border-b-2 border-transparent text-slate-400 hover:text-slate-200">Register</button>
+      </div>
+
+      <form id="authForm" onsubmit="handleAuthSubmit(event)" class="space-y-4">
+        <div id="signupFields" class="space-y-4 hidden">
+          <div>
+            <label class="block text-xs font-medium text-slate-400 mb-1">Full Name</label>
+            <input type="text" id="authFullName" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-indigo-500" />
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-slate-400 mb-1">Role</label>
+            <select id="authRole" onchange="onRoleChanged()" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-indigo-500">
+              <option value="student">Student</option>
+              <option value="faculty">Faculty</option>
+              <option value="admin">Administrator</option>
+            </select>
+          </div>
+          <div id="studentExtraFields" class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="block text-xs font-medium text-slate-400 mb-1">Branch</label>
+              <input type="text" id="authBranch" placeholder="CSE" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-sm uppercase focus:outline-none focus:border-indigo-500" />
+            </div>
+            <div>
+              <label class="block text-xs font-medium text-slate-400 mb-1">Scholar No.</label>
+              <input type="text" id="authScholarNo" placeholder="231110000" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-indigo-500" />
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <label class="block text-xs font-medium text-slate-400 mb-1">Institutional Email</label>
+          <input type="email" id="authEmail" required placeholder="name@college.edu" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-indigo-500" />
+        </div>
+
+        <div>
+          <label class="block text-xs font-medium text-slate-400 mb-1">Password</label>
+          <input type="password" id="authPassword" required minlength="6" placeholder="••••••••" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-indigo-500" />
+        </div>
+
+        <p id="authError" class="text-xs text-rose-400 hidden"></p>
+
+        <button type="submit" id="authSubmitBtn" class="w-full py-2.5 bg-indigo-600 hover:bg-indigo-500 text-sm font-semibold rounded-xl transition">
+          Sign In
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
