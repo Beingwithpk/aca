@@ -1,31 +1,32 @@
+import os
+import requests
 from typing import List
-from sentence_transformers import SentenceTransformer
 from src.config import EMBEDDING_MODEL
 
-_embed_model: SentenceTransformer | None = None
-
-def get_embedding_model() -> SentenceTransformer:
-    global _embed_model
-    if _embed_model is None:
-        _embed_model = SentenceTransformer(EMBEDDING_MODEL)
-    return _embed_model
+HF_API_KEY = os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACE_API_KEY")
+API_URL = f"https://api-inference.huggingface.co/pipeline/feature-extraction/{EMBEDDING_MODEL}"
 
 def get_embedding(text: str) -> List[float]:
-    model = get_embedding_model()
-    # Normalize embeddings for cosine similarity
-    return model.encode(text, normalize_embeddings=True).tolist()
+    """Generates text embeddings via Hugging Face Serverless Inference API."""
+    clean_text = text.replace("\n", " ").strip()
+    if not clean_text:
+        return [0.0] * 384
 
-def chunk_text(text: str, chunk_size: int = 500, overlap: int = 50) -> List[str]:
-    """Splits raw text into sliding-window word chunks with overlap."""
-    words = text.split()
-    if not words:
-        return []
-    chunks = []
-    start = 0
-    while start < len(words):
-        end = min(start + chunk_size, len(words))
-        chunks.append(" ".join(words[start:end]))
-        if end == len(words):
-            break
-        start += (chunk_size - overlap)
-    return chunks
+    headers = {"Authorization": f"Bearer {HF_API_KEY}"} if HF_API_KEY else {}
+    
+    response = requests.post(
+        API_URL,
+        headers=headers,
+        json={"inputs": clean_text, "options": {"wait_for_model": True}},
+        timeout=30
+    )
+
+    if response.status_code != 200:
+        raise RuntimeError(f"Embedding API error ({response.status_code}): {response.text}")
+
+    result = response.json()
+    
+    # If the response is wrapped in a nested batch list, extract the first vector
+    if isinstance(result, list) and len(result) > 0 and isinstance(result[0], list):
+        return result[0]
+    return result
