@@ -1,15 +1,14 @@
 import json
+import traceback
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
 
 from src.config import SUPABASE_URL, SUPABASE_STORAGE_BUCKET
 from src.db import get_connection
-from src.models import ChatQueryRequest
+from src.models import ChatQueryRequest, SamplePaperRequest
 from src.security import get_current_user
 from src.services.embeddings import get_embedding
-from src.services.llm import stream_rag_response
-from src.models import SamplePaperRequest
-from src.services.llm import get_llm_client, LLM_MODEL
+from src.services.llm import stream_rag_response, get_llm_client, LLM_MODEL
 
 router = APIRouter(prefix="/api/chat", tags=["Chat"])
 
@@ -48,32 +47,42 @@ def query_academic_rag_stream(
         query_vector = get_embedding(user_query)
         vector_str = f"[{','.join(map(str, query_vector))}]"
     except Exception as e:
+        print(f"[CHAT ERROR] Embedding generation failed: {e}")
+        traceback.print_exc()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Embedding generation failed: {str(e)}"
         )
 
     # 2. Similarity search in pgvector with JOIN to documents table
-    with get_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT 
-                    dc.doc_type, 
-                    dc.page_number, 
-                    dc.content, 
-                    1 - (dc.embedding <=> %s::vector) AS similarity,
-                    d.filename,
-                    d.storage_path
-                FROM document_chunks dc
-                JOIN documents d ON dc.document_id = d.id
-                WHERE dc.course_id = %s
-                ORDER BY dc.embedding <=> %s::vector ASC
-                LIMIT 5;
-                """,
-                (vector_str, clean_course_id, vector_str)
-            )
-            rows = cur.fetchall()
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT 
+                        dc.doc_type, 
+                        dc.page_number, 
+                        dc.content, 
+                        1 - (dc.embedding <=> %s::vector) AS similarity,
+                        d.filename,
+                        d.storage_path
+                    FROM document_chunks dc
+                    JOIN documents d ON dc.document_id = d.id
+                    WHERE dc.course_id = %s
+                    ORDER BY dc.embedding <=> %s::vector ASC
+                    LIMIT 5;
+                    """,
+                    (vector_str, clean_course_id, vector_str)
+                )
+                rows = cur.fetchall()
+    except Exception as e:
+        print(f"[CHAT ERROR] Database pgvector query failed: {e}")
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Database query failed: {str(e)}"
+        )
 
     if not rows:
         def empty_generator():
@@ -95,21 +104,32 @@ def query_academic_rag_stream(
         sources.append({
             "doc_type": r[0] or "Document",
             "page_number": page_num,
-            "content": r[2],
-            "similarity": round(float(r[3]), 4),
+            "content": r[2] or "",
+            "similarity": round(float(r[3]), 4) if r[3] is not None else 0.0,
             "filename": r[4] or "Document.pdf",
             "pdf_url": pdf_url
         })
 
     history = [m.model_dump() for m in payload.history] if payload.history else None
 
-    # 3. Stream generator response
+    # 3. Stream generator response with safety try-catch
+    def safe_stream_wrapper():
+        try:
+            for chunk in stream_rag_response(
+                query=user_query,
+                context_chunks=sources,
+                conversation_history=history
+            ):
+                yield chunk
+        except Exception as err:
+            print(f"[CHAT ERROR] Streaming error during generation: {err}")
+            traceback.print_exc()
+            err_msg = json.dumps({"type": "error", "data": str(err)})
+            yield f"data: {err_msg}\n\n"
+            yield "data: [DONE]\n\n"
+
     return StreamingResponse(
-        stream_rag_response(
-            query=user_query,
-            context_chunks=sources,
-            conversation_history=history
-        ),
+        safe_stream_wrapper(),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -117,6 +137,7 @@ def query_academic_rag_stream(
             "X-Accel-Buffering": "no"
         }
     )
+
 
 @router.post("/generate-paper")
 def generate_sample_paper(
@@ -131,43 +152,51 @@ def generate_sample_paper(
     """
     clean_course_id = payload.course_id.strip().upper()
 
-    with get_connection() as conn:
-        with conn.cursor() as cur:
-            # 1. Fetch Syllabus chunks
-            cur.execute(
-                """
-                SELECT content FROM document_chunks 
-                WHERE course_id = %s AND LOWER(doc_type) LIKE %s
-                LIMIT 4;
-                """,
-                (clean_course_id, "%syllabus%")
-            )
-            syllabus_rows = cur.fetchall()
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                # 1. Fetch Syllabus chunks
+                cur.execute(
+                    """
+                    SELECT content FROM document_chunks 
+                    WHERE course_id = %s AND LOWER(doc_type) LIKE %s
+                    LIMIT 4;
+                    """,
+                    (clean_course_id, "%syllabus%")
+                )
+                syllabus_rows = cur.fetchall()
 
-            # 2. Fetch PYQ chunks
-            cur.execute(
-                """
-                SELECT content FROM document_chunks 
-                WHERE course_id = %s AND LOWER(doc_type) LIKE %s
-                LIMIT 6;
-                """,
-                (clean_course_id, "%previous year%")
-            )
-            pyq_rows = cur.fetchall()
+                # 2. Fetch PYQ chunks
+                cur.execute(
+                    """
+                    SELECT content FROM document_chunks 
+                    WHERE course_id = %s AND LOWER(doc_type) LIKE %s
+                    LIMIT 6;
+                    """,
+                    (clean_course_id, "%previous year%")
+                )
+                pyq_rows = cur.fetchall()
 
-            # 3. Fetch Core Lecture / Reference chunks
-            cur.execute(
-                """
-                SELECT content FROM document_chunks 
-                WHERE course_id = %s 
-                  AND LOWER(doc_type) NOT LIKE %s 
-                  AND LOWER(doc_type) NOT LIKE %s
-                ORDER BY created_at DESC
-                LIMIT 10;
-                """,
-                (clean_course_id, "%syllabus%", "%previous year%")
-            )
-            note_rows = cur.fetchall()
+                # 3. Fetch Core Lecture / Reference chunks
+                cur.execute(
+                    """
+                    SELECT content FROM document_chunks 
+                    WHERE course_id = %s 
+                      AND LOWER(doc_type) NOT LIKE %s 
+                      AND LOWER(doc_type) NOT LIKE %s
+                    ORDER BY created_at DESC
+                    LIMIT 10;
+                    """,
+                    (clean_course_id, "%syllabus%", "%previous year%")
+                )
+                note_rows = cur.fetchall()
+    except Exception as e:
+        print(f"[PAPER ERROR] Database extraction failed: {e}")
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch course materials: {str(e)}"
+        )
 
     if not syllabus_rows and not pyq_rows and not note_rows:
         def empty_gen():
@@ -179,9 +208,9 @@ def generate_sample_paper(
             yield "data: [DONE]\n\n"
         return StreamingResponse(empty_gen(), media_type="text/event-stream")
 
-    syllabus_text = "\n---\n".join([r[0] for r in syllabus_rows]) or "Follow standard university scope for this course code."
-    pyq_text = "\n---\n".join([r[0] for r in pyq_rows]) or "Standard examination pattern with Short and Long answer questions."
-    notes_text = "\n---\n".join([r[0] for r in note_rows]) or "General core concepts."
+    syllabus_text = "\n---\n".join([r[0] for r in syllabus_rows if r[0]]) or "Follow standard university scope for this course code."
+    pyq_text = "\n---\n".join([r[0] for r in pyq_rows if r[0]]) or "Standard examination pattern with Short and Long answer questions."
+    notes_text = "\n---\n".join([r[0] for r in note_rows if r[0]]) or "General core concepts."
 
     system_prompt = (
         "You are an academic controller of examinations and senior university professor. "
@@ -215,8 +244,8 @@ Generate the complete examination paper now.
 """
 
     def stream_paper():
-        client = get_llm_client()
         try:
+            client = get_llm_client()
             stream = client.chat.completions.create(
                 model=LLM_MODEL,
                 messages=[
@@ -233,6 +262,8 @@ Generate the complete examination paper now.
                     if token:
                         yield f"data: {json.dumps({'type': 'token', 'data': token})}\n\n"
         except Exception as e:
+            print(f"[PAPER ERROR] LLM completion failure: {e}")
+            traceback.print_exc()
             yield f"data: {json.dumps({'type': 'error', 'data': str(e)})}\n\n"
         yield "data: [DONE]\n\n"
 
