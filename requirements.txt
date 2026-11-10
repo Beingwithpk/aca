@@ -1,6 +1,7 @@
 fastapi
 uvicorn[standard]
-pydantic
+pydantic[email]
+email-validator
 python-dotenv
 psycopg[binary,pool]
 python-jose[cryptography]
@@ -9,3 +10,4 @@ pypdf
 openai
 supabase
 requests
+python-multipart
