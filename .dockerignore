@@ -1,0 +1,8 @@
+__pycache__
+myenv
+.venv
+*.pyc
+.git
+.env
+uploads
+temp
