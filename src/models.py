@@ -94,3 +94,11 @@ class BulkAttendanceRequest(BaseModel):
     branch: str
     session_date: date
     records: List[StudentAttendanceItem]
+
+# --- Sample Paper Models ---
+class SamplePaperRequest(BaseModel):
+    course_id: str
+    exam_type: str = Field(default="Mid-Semester", pattern="^(Quiz|Mid-Semester|End-Semester)$")
+    total_marks: int = Field(default=50, ge=10, le=100)
+    difficulty: str = Field(default="Medium", pattern="^(Easy|Medium|Hard)$")
+    include_solutions: bool = True

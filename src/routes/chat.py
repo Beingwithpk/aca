@@ -8,6 +8,8 @@ from src.models import ChatQueryRequest
 from src.security import get_current_user
 from src.services.embeddings import get_embedding
 from src.services.llm import stream_rag_response
+from src.models import SamplePaperRequest
+from src.services.llm import get_llm_client, LLM_MODEL
 
 router = APIRouter(prefix="/api/chat", tags=["Chat"])
 
@@ -114,4 +116,128 @@ def query_academic_rag_stream(
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no"
         }
+    )
+
+@router.post("/generate-paper")
+def generate_sample_paper(
+    payload: SamplePaperRequest,
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Synthesizes a realistic academic question paper grounded in:
+    1. Syllabus (coverage)
+    2. Previous Year Questions (pattern and mark distribution)
+    3. Lecture Notes (technical depth)
+    """
+    clean_course_id = payload.course_id.strip().upper()
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            # 1. Fetch Syllabus chunks
+            cur.execute(
+                """
+                SELECT content FROM document_chunks 
+                WHERE course_id = %s AND LOWER(doc_type) LIKE %s
+                LIMIT 4;
+                """,
+                (clean_course_id, "%syllabus%")
+            )
+            syllabus_rows = cur.fetchall()
+
+            # 2. Fetch PYQ chunks
+            cur.execute(
+                """
+                SELECT content FROM document_chunks 
+                WHERE course_id = %s AND LOWER(doc_type) LIKE %s
+                LIMIT 6;
+                """,
+                (clean_course_id, "%previous year%")
+            )
+            pyq_rows = cur.fetchall()
+
+            # 3. Fetch Core Lecture / Reference chunks
+            cur.execute(
+                """
+                SELECT content FROM document_chunks 
+                WHERE course_id = %s 
+                  AND LOWER(doc_type) NOT LIKE %s 
+                  AND LOWER(doc_type) NOT LIKE %s
+                ORDER BY created_at DESC
+                LIMIT 10;
+                """,
+                (clean_course_id, "%syllabus%", "%previous year%")
+            )
+            note_rows = cur.fetchall()
+
+    if not syllabus_rows and not pyq_rows and not note_rows:
+        def empty_gen():
+            msg = json.dumps({
+                "type": "token",
+                "data": f"Cannot generate a sample paper for {clean_course_id}. No course documents (syllabus, PYQs, or lecture notes) have been uploaded yet."
+            })
+            yield f"data: {msg}\n\n"
+            yield "data: [DONE]\n\n"
+        return StreamingResponse(empty_gen(), media_type="text/event-stream")
+
+    syllabus_text = "\n---\n".join([r[0] for r in syllabus_rows]) or "Follow standard university scope for this course code."
+    pyq_text = "\n---\n".join([r[0] for r in pyq_rows]) or "Standard examination pattern with Short and Long answer questions."
+    notes_text = "\n---\n".join([r[0] for r in note_rows]) or "General core concepts."
+
+    system_prompt = (
+        "You are an academic controller of examinations and senior university professor. "
+        "Your task is to design an authentic, rigorous examination paper based strictly on the provided "
+        "syllabus, recurring question styles from previous year questions (PYQs), and lecture materials.\n\n"
+        "Rules:\n"
+        "1. Strictly adhere to the requested total marks and exam type.\n"
+        "2. Structure the paper cleanly with Sections (e.g., Section A: Concept & Definitions, Section B: Problem Solving & Derivations, Section C: Comprehensive Analysis).\n"
+        "3. Provide exact mark breakdowns for each question (e.g., '[5 Marks]').\n"
+        "4. Use standard LaTeX notation for mathematical equations, relations, and functional dependencies ($...$).\n"
+        "5. If 'include_solutions' is True, append a detailed 'Marking Scheme & Model Answers' section at the end with step-by-step solutions."
+    )
+
+    user_prompt = f"""
+Course Code: {clean_course_id}
+Exam Type: {payload.exam_type}
+Total Marks: {payload.total_marks}
+Difficulty Level: {payload.difficulty}
+Include Model Solutions: {payload.include_solutions}
+
+=== SYLLABUS & MODULE SCOPE ===
+{syllabus_text}
+
+=== PREVIOUS YEAR QUESTION (PYQ) PATTERNS ===
+{pyq_text}
+
+=== REFERENCE COURSE CONTENT ===
+{notes_text}
+
+Generate the complete examination paper now.
+"""
+
+    def stream_paper():
+        client = get_llm_client()
+        try:
+            stream = client.chat.completions.create(
+                model=LLM_MODEL,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                temperature=0.3,
+                max_tokens=2500,
+                stream=True
+            )
+            for chunk in stream:
+                if chunk.choices and len(chunk.choices) > 0:
+                    token = chunk.choices[0].delta.content or ""
+                    if token:
+                        yield f"data: {json.dumps({'type': 'token', 'data': token})}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'type': 'error', 'data': str(e)})}\n\n"
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(
+        stream_paper(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"}
     )

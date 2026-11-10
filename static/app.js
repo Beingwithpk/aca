@@ -206,9 +206,10 @@ function logout() {
 // --- Tabs Management ---
 function switchTab(tab) {
   state.activeTab = tab;
-  ["chat", "attendance", "courses"].forEach(t => {
+  ["chat", "attendance", "courses", "paper"].forEach(t => {
     const view = document.getElementById(`view${t.charAt(0).toUpperCase() + t.slice(1)}`);
     const btn = document.getElementById(`tab${t.charAt(0).toUpperCase() + t.slice(1)}`);
+    if (!view || !btn) return;
     if (t === tab) {
       view.classList.remove("hidden");
       btn.className = "py-3 border-b-2 border-indigo-500 text-indigo-400 flex items-center space-x-2";
@@ -670,4 +671,159 @@ function escapeHtml(str) {
     "'": '&#39;',
     '"': '&quot;'
   }[tag] || tag));
+}
+
+// --- Sample Paper Generation ---
+async function handleGeneratePaper() {
+  const outputEl = document.getElementById("paperOutput");
+  const genBtn = document.getElementById("genPaperBtn");
+  const courseCode = document.getElementById("paperCourseSelect").value;
+
+  if (!courseCode) {
+    alert("Please choose a semester and select a course first.");
+    return;
+  }
+
+  const examType = document.getElementById("paperExamType").value;
+  const totalMarks = parseInt(document.getElementById("paperMarks").value, 10);
+  const difficulty = document.getElementById("paperDifficulty").value;
+  const includeSolutions = document.getElementById("paperSolutions").checked;
+
+  genBtn.disabled = true;
+  genBtn.innerHTML = `<i class="fa-solid fa-spinner fa-spin mr-2"></i>Synthesizing Paper...`;
+  outputEl.innerHTML = `<p class="text-slate-400"><i class="fa-solid fa-spinner fa-spin mr-2 text-indigo-400"></i>Reviewing syllabus boundaries, PYQ patterns, and lecture modules for ${courseCode}...</p>`;
+
+  try {
+    const response = await fetch("/api/chat/generate-paper", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${state.token}`
+      },
+      body: JSON.stringify({
+        course_id: courseCode,
+        exam_type: examType,
+        total_marks: totalMarks,
+        difficulty: difficulty,
+        include_solutions: includeSolutions
+      })
+    });
+
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.detail || "Paper generation failed");
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder("utf-8");
+    let accumulatedText = "";
+    let buffer = "";
+
+    const finalizePaperFormatting = () => {
+      if (window.marked) {
+        outputEl.innerHTML = marked.parse(accumulatedText);
+      } else {
+        outputEl.textContent = accumulatedText;
+      }
+      if (window.renderMathInElement) {
+        renderMathInElement(outputEl, {
+          delimiters: [
+            { left: "$$", right: "$$", display: true },
+            { left: "$", right: "$", display: false },
+            { left: "\\[", right: "\\]", display: true },
+            { left: "\\(", right: "\\)", display: false }
+          ],
+          throwOnError: false
+        });
+      }
+    };
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n\n");
+      buffer = lines.pop();
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed.startsWith("data:")) continue;
+
+        const rawData = trimmed.replace("data:", "").trim();
+        if (rawData === "[DONE]") {
+          finalizePaperFormatting();
+          break;
+        }
+
+        try {
+          const parsed = JSON.parse(rawData);
+          if (parsed.type === "token") {
+            accumulatedText += parsed.data;
+            outputEl.textContent = accumulatedText;
+          } else if (parsed.type === "error") {
+            outputEl.innerHTML += `<br><span class="text-rose-400">Error: ${escapeHtml(parsed.data)}</span>`;
+          }
+        } catch (e) {
+          // Incomplete chunk
+        }
+      }
+    }
+
+    finalizePaperFormatting();
+
+  } catch (err) {
+    outputEl.innerHTML = `<span class="text-rose-400">Generation failed: ${escapeHtml(err.message)}</span>`;
+  } finally {
+    genBtn.disabled = false;
+    genBtn.innerHTML = `<i class="fa-solid fa-wand-magic-sparkles mr-2"></i>Synthesize Exam Paper`;
+  }
+}
+function printGeneratedPaper() {
+  const content = document.getElementById("paperOutput").innerHTML;
+  const printWindow = window.open("", "_blank");
+  printWindow.document.write(`
+    <html>
+      <head>
+        <title>Academic Examination Paper - ${state.selectedCourse || ''}</title>
+        <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+        <style>
+          body { font-family: 'Times New Roman', serif; padding: 40px; color: #111; line-height: 1.5; }
+          h1, h2, h3 { text-align: center; margin-bottom: 5px; }
+          hr { margin: 20px 0; border: 0; border-top: 1px solid #333; }
+        </style>
+      </head>
+      <body>
+        ${content}
+      </body>
+    </html>
+  `);
+  printWindow.document.close();
+  printWindow.focus();
+  setTimeout(() => printWindow.print(), 500);
+}
+
+// --- Cascading Semester -> Course Filter for Paper Generator ---
+function onPaperSemChanged() {
+  const semVal = document.getElementById("paperSemSelect").value;
+  const courseSelect = document.getElementById("paperCourseSelect");
+
+  if (!semVal) {
+    courseSelect.innerHTML = `<option value="">-- Select Semester First --</option>`;
+    courseSelect.disabled = true;
+    return;
+  }
+
+  const selectedSem = parseInt(semVal, 10);
+  const filteredCourses = state.courses.filter(c => Number(c.semester) === selectedSem);
+
+  if (filteredCourses.length === 0) {
+    courseSelect.innerHTML = `<option value="">-- No Courses in Semester ${selectedSem} --</option>`;
+    courseSelect.disabled = true;
+    return;
+  }
+
+  courseSelect.innerHTML = `<option value="">-- Choose Subject --</option>` +
+    filteredCourses.map(c => `<option value="${c.code}">${c.code} - ${c.title}</option>`).join("");
+  courseSelect.disabled = false;
 }
