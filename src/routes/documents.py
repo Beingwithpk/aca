@@ -9,7 +9,7 @@ from src.db import get_connection
 from src.models import DocumentOut
 from src.security import get_current_user, require_role
 from src.services.storage import upload_pdf_to_storage
-from src.services.embeddings import get_embedding_model, chunk_text
+from src.services.embeddings import get_embeddings_batch, chunk_text
 
 router = APIRouter(prefix="/api/documents", tags=["Documents"])
 
@@ -70,20 +70,27 @@ async def upload_document(
                     (doc_id, clean_course_id, doc_type, file.filename, storage_path, user_id)
                 )
 
-            # 4. Extract PDF text & Generate Embeddings
+            # 4. Extract PDF text and collect chunks with page metadata
             reader = PdfReader(io.BytesIO(file_bytes))
-            embed_model = get_embedding_model()
-            chunk_records = []
+            raw_chunks_meta = []  # list of (chunk_text, page_number)
 
             for page_idx, page in enumerate(reader.pages):
                 page_text = page.extract_text() or ""
                 text_chunks = chunk_text(page_text, chunk_size=400, overlap=40)
-
                 for chunk in text_chunks:
-                    # Generate normalized 384-d vector
-                    embedding = embed_model.encode(chunk, normalize_embeddings=True).tolist()
-                    vector_str = f"[{','.join(map(str, embedding))}]"
+                    raw_chunks_meta.append((chunk, page_idx + 1))
 
+            chunk_records = []
+
+            # 5. Generate embeddings via API in batches (16 chunks per batch)
+            BATCH_SIZE = 16
+            for i in range(0, len(raw_chunks_meta), BATCH_SIZE):
+                batch = raw_chunks_meta[i:i + BATCH_SIZE]
+                texts = [item[0] for item in batch]
+                batch_vectors = get_embeddings_batch(texts)
+
+                for (chunk, page_num), vector in zip(batch, batch_vectors):
+                    vector_str = f"[{','.join(map(str, vector))}]"
                     chunk_records.append((
                         str(uuid.uuid4()),
                         doc_id,
@@ -91,10 +98,10 @@ async def upload_document(
                         doc_type,
                         chunk,
                         vector_str,
-                        page_idx + 1
+                        page_num
                     ))
 
-            # 5. Bulk insert vector chunks
+            # 6. Bulk insert vector chunks
             if chunk_records:
                 with conn.cursor() as cur:
                     cur.executemany(
