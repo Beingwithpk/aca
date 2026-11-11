@@ -70,26 +70,45 @@
           </select>
         </div>
 
-        <!-- Ingestion Box (Faculty/Admin only) -->
+        <!-- Ingest Material Container with Multi-file & Auto-Sorter -->
+        <!-- Ingest Material Container with Smart Prediction Review -->
         <div id="uploadContainer" class="border border-dashed border-slate-700 bg-slate-950/60 rounded-xl p-4 flex flex-col space-y-3 hidden">
           <div class="flex items-center justify-between">
             <span class="text-xs font-semibold uppercase text-slate-400">Ingest Material</span>
-            <span class="text-[10px] bg-indigo-900/60 text-indigo-300 px-2 py-0.5 rounded font-mono">PDF Only</span>
+            <span class="text-[10px] bg-indigo-900/60 text-indigo-300 px-2 py-0.5 rounded font-mono">Auto-Sort & Vectorize</span>
           </div>
-          
-          <select id="docTypeSelect" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-300">
-            <option value="Lecture Notes">Lecture Notes</option>
-            <option value="Syllabus">Syllabus</option>
-            <option value="Previous Year Questions">Previous Year Questions</option>
-            <option value="Reference Book">Reference Book</option>
-          </select>
 
-          <input type="file" id="pdfFileInput" accept=".pdf" class="text-xs text-slate-400 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-indigo-600 file:text-white hover:file:bg-indigo-500 cursor-pointer" />
+          <!-- File Input -->
+          <input 
+            type="file" 
+            id="pdfFileInput" 
+            accept=".pdf" 
+            multiple 
+            onchange="handleFilesSelected()"
+            class="text-xs text-slate-400 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-indigo-600 file:text-white hover:file:bg-indigo-500 cursor-pointer" 
+          />
 
-          <button id="uploadBtn" onclick="handlePdfUpload()" class="w-full py-2 bg-indigo-600 hover:bg-indigo-500 text-xs font-medium rounded-lg transition-colors flex items-center justify-center space-x-2">
-            <i class="fa-solid fa-cloud-arrow-up"></i>
-            <span>Vectorize & Index Material</span>
+          <!-- Prediction Loader -->
+          <div id="predictionSpinner" class="hidden flex items-center justify-center space-x-2 py-2 text-xs text-indigo-400">
+            <i class="fa-solid fa-circle-notch fa-spin"></i>
+            <span>Analyzing document structure & contents...</span>
+          </div>
+
+          <!-- Predictions Review Container -->
+          <div id="predictionReviewList" class="hidden flex flex-col space-y-2 max-h-60 overflow-y-auto pr-1">
+            <!-- Dynamic File Review Cards Render Here -->
+          </div>
+
+          <!-- Final Upload Button -->
+          <button 
+            id="confirmUploadBtn" 
+            onclick="confirmAndUploadBatch()" 
+            class="hidden w-full py-2 bg-emerald-600 hover:bg-emerald-500 text-xs font-medium rounded-lg transition-colors flex items-center justify-center space-x-2 text-white"
+          >
+            <i class="fa-solid fa-check-double"></i>
+            <span id="confirmUploadBtnText">Confirm & Ingest Batch</span>
           </button>
+
           <p id="uploadStatus" class="text-[11px] text-center text-slate-400 hidden"></p>
         </div>
 

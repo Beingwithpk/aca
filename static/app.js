@@ -827,3 +827,172 @@ function onPaperSemChanged() {
     filteredCourses.map(c => `<option value="${c.code}">${c.code} - ${c.title}</option>`).join("");
   courseSelect.disabled = false;
 }
+let selectedFilesCache = [];
+let availableCoursesCache = [];
+
+const DOC_TYPES = [
+  "Lecture Notes",
+  "Syllabus",
+  "Previous Year Questions",
+  "Lab Manual",
+  "Reference Book"
+];
+
+async function handleFilesSelected() {
+  const fileInput = document.getElementById("pdfFileInput");
+  const spinner = document.getElementById("predictionSpinner");
+  const reviewList = document.getElementById("predictionReviewList");
+  const confirmBtn = document.getElementById("confirmUploadBtn");
+  const statusEl = document.getElementById("uploadStatus");
+
+  if (!fileInput.files || fileInput.files.length === 0) return;
+
+  selectedFilesCache = Array.from(fileInput.files);
+  reviewList.innerHTML = "";
+  reviewList.classList.add("hidden");
+  confirmBtn.classList.add("hidden");
+  statusEl.classList.add("hidden");
+  spinner.classList.remove("hidden");
+
+  const formData = new FormData();
+  selectedFilesCache.forEach((file) => formData.append("files", file));
+
+  try {
+    const token = localStorage.getItem("token") || localStorage.getItem("access_token");
+    const res = await fetch("/api/documents/predict", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: formData
+    });
+
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || "Prediction failed");
+    }
+
+    const data = await res.json();
+    availableCoursesCache = data.available_courses || [];
+    renderPredictionReview(data.predictions);
+  } catch (err) {
+    statusEl.classList.remove("hidden", "text-emerald-400");
+    statusEl.classList.add("text-red-400");
+    statusEl.textContent = `Analysis error: ${err.message}`;
+  } finally {
+    spinner.classList.add("hidden");
+  }
+}
+
+function renderPredictionReview(predictions) {
+  const reviewList = document.getElementById("predictionReviewList");
+  const confirmBtn = document.getElementById("confirmUploadBtn");
+  reviewList.innerHTML = "";
+
+  predictions.forEach((item, index) => {
+    if (!item.valid) {
+      const errDiv = document.createElement("div");
+      errDiv.className = "p-2 bg-red-950/40 border border-red-800 rounded-lg text-[11px] text-red-300";
+      errDiv.textContent = `${item.filename}: ${item.error}`;
+      reviewList.appendChild(errDiv);
+      return;
+    }
+
+    const card = document.createElement("div");
+    card.className = "bg-slate-900 border border-slate-700/80 rounded-lg p-2.5 flex flex-col space-y-2 text-xs";
+    card.dataset.filename = item.filename;
+
+    const courseOptions = availableCoursesCache.map(c => 
+      `<option value="${c.code}" ${c.code === item.predicted_course_id ? 'selected' : ''}>${c.code} - ${c.title || ''}</option>`
+    ).join("");
+
+    const typeOptions = DOC_TYPES.map(t => 
+      `<option value="${t}" ${t === item.predicted_doc_type ? 'selected' : ''}>${t}</option>`
+    ).join("");
+
+    card.innerHTML = `
+      <div class="flex items-center justify-between text-slate-300">
+        <span class="truncate font-medium max-w-[200px]" title="${item.filename}">${item.filename}</span>
+        <span class="text-[10px] text-slate-500 font-mono">${item.page_count} pages</span>
+      </div>
+      <div class="grid grid-cols-2 gap-2">
+        <div>
+          <label class="text-[10px] uppercase font-semibold text-slate-500">Subject</label>
+          <select class="course-select w-full bg-slate-950 border border-slate-700 rounded px-1.5 py-1 text-slate-300 text-[11px] mt-0.5">
+            ${courseOptions}
+          </select>
+        </div>
+        <div>
+          <label class="text-[10px] uppercase font-semibold text-slate-500">Category</label>
+          <select class="type-select w-full bg-slate-950 border border-slate-700 rounded px-1.5 py-1 text-slate-300 text-[11px] mt-0.5">
+            ${typeOptions}
+          </select>
+        </div>
+      </div>
+    `;
+    reviewList.appendChild(card);
+  });
+
+  reviewList.classList.remove("hidden");
+  confirmBtn.classList.remove("hidden");
+}
+
+async function confirmAndUploadBatch() {
+  const confirmBtn = document.getElementById("confirmUploadBtn");
+  const confirmText = document.getElementById("confirmUploadBtnText");
+  const statusEl = document.getElementById("uploadStatus");
+  const reviewCards = document.querySelectorAll("#predictionReviewList > div[data-filename]");
+
+  if (reviewCards.length === 0) return;
+
+  const metadata = [];
+  reviewCards.forEach((card) => {
+    const filename = card.dataset.filename;
+    const course_id = card.querySelector(".course-select").value;
+    const doc_type = card.querySelector(".type-select").value;
+    metadata.push({ filename, course_id, doc_type });
+  });
+
+  const formData = new FormData();
+  selectedFilesCache.forEach((file) => formData.append("files", file));
+  formData.append("metadata", JSON.stringify(metadata));
+
+  confirmBtn.disabled = true;
+  confirmBtn.classList.add("opacity-50", "cursor-not-allowed");
+  confirmText.textContent = "Vectorizing & Ingesting...";
+  statusEl.classList.remove("hidden", "text-red-400", "text-emerald-400");
+  statusEl.classList.add("text-slate-400");
+  statusEl.textContent = "Generating ONNX embeddings and committing to pgvector...";
+
+  try {
+    const token = localStorage.getItem("token") || localStorage.getItem("access_token");
+    const res = await fetch("/api/documents/upload-batch", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: formData
+    });
+
+    const result = await res.json();
+    if (!res.ok) throw new Error(result.detail || "Upload batch failed");
+
+    statusEl.classList.remove("text-slate-400");
+    statusEl.classList.add("text-emerald-400");
+    statusEl.textContent = result.message;
+
+    // Reset view
+    document.getElementById("pdfFileInput").value = "";
+    document.getElementById("predictionReviewList").classList.add("hidden");
+    confirmBtn.classList.add("hidden");
+
+    // Refresh active course document list if helper exists
+    if (typeof loadCourseDocuments === "function" && window.currentCourseCode) {
+      loadCourseDocuments(window.currentCourseCode);
+    }
+  } catch (err) {
+    statusEl.classList.remove("text-slate-400");
+    statusEl.classList.add("text-red-400");
+    statusEl.textContent = `Ingestion error: ${err.message}`;
+  } finally {
+    confirmBtn.disabled = false;
+    confirmBtn.classList.remove("opacity-50", "cursor-not-allowed");
+    confirmText.textContent = "Confirm & Ingest Batch";
+  }
+}
