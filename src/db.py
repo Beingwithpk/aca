@@ -10,6 +10,8 @@ pool = ConnectionPool(
     open=True,
     kwargs={"prepare_threshold": False}
 )
+def get_connection():
+    return pool.connection()
 
 @contextlib.contextmanager
 def get_connection():
