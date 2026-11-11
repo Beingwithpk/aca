@@ -8,7 +8,7 @@ pool = ConnectionPool(
     min_size=1,
     max_size=10,
     open=True,
-    kwargs={"autocommit": False}
+    kwargs={"prepare_threshold": False}
 )
 
 @contextlib.contextmanager
