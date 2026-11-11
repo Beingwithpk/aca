@@ -2,16 +2,14 @@ import contextlib
 from psycopg_pool import ConnectionPool
 from src.config import DATABASE_URL, EMBEDDING_DIM
 
-# Initialize connection pool without auto-opening worker threads at import time
+# Initialize connection pool with prepared statements disabled for PgBouncer
 pool = ConnectionPool(
     conninfo=DATABASE_URL,
     min_size=1,
     max_size=10,
     open=True,
-    kwargs={"prepare_threshold": False}
+    kwargs={"prepare_threshold": None}  # CRITICAL: Must be None, NOT False
 )
-def get_connection():
-    return pool.connection()
 
 @contextlib.contextmanager
 def get_connection():
