@@ -22,6 +22,17 @@ def upload_pdf_to_storage(file_bytes: bytes, destination_path: str) -> str:
     )
     return destination_path
 
+def get_signed_pdf_url(storage_path: str, expires_in: int = 3600) -> str:
+    """Generates a temporary signed URL for viewing/downloading a PDF."""
+    supabase = get_supabase_client()
+    bucket = supabase.storage.from_(SUPABASE_STORAGE_BUCKET)
+    res = bucket.create_signed_url(storage_path, expires_in)
+    
+    signed_url = res.get("signedURL") or res.get("signedUrl")
+    if not signed_url:
+        raise RuntimeError(f"Failed to generate signed URL: {res}")
+    return signed_url
+
 def delete_pdf_from_storage(destination_path: str):
     """Deletes a file from Supabase Storage."""
     supabase = get_supabase_client()

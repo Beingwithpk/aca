@@ -5,7 +5,7 @@ import traceback
 from typing import List, Optional
 from fastapi import APIRouter, UploadFile, File, Form, Depends, HTTPException, status
 from pypdf import PdfReader
-
+from src.services.storage import upload_pdf_to_storage, get_signed_pdf_url
 from src.db import get_connection
 from src.models import DocumentOut
 from src.security import get_current_user, require_role
@@ -15,6 +15,34 @@ from src.services.classifier import classify_document_and_subject, sanitize_text
 
 router = APIRouter(prefix="/api/documents", tags=["Documents"])
 
+@router.get("/download/{doc_id}")
+def get_document_download_url(
+    doc_id: str,
+    current_user: dict = Depends(get_current_user)
+):
+    """Generates a temporary signed URL (valid for 1 hour) to view/download a PDF."""
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT filename, storage_path FROM documents WHERE id = %s;",
+                (doc_id,),
+                prepare=False
+            )
+            row = cur.fetchone()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Document not found.")
+
+    filename, storage_path = row[0], row[1]
+
+    try:
+        signed_url = get_signed_pdf_url(storage_path, expires_in=3600)
+        return {"filename": filename, "url": signed_url}
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to retrieve file link: {str(e)}"
+        )
 
 @router.post("/predict")
 async def predict_documents_metadata(

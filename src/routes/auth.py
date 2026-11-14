@@ -20,8 +20,10 @@ def signup(payload: UserSignupRequest):
                     detail="A user with this email already exists."
                 )
 
-            # Insert new user
+            # Enforce student-only registration (ignores any admin/faculty role sent in payload)
+            enforced_role = "student"
             hashed_pw = hash_password(payload.password)
+
             cur.execute(
                 """
                 INSERT INTO users (email, full_name, hashed_password, role, branch, scholar_no)
@@ -32,7 +34,7 @@ def signup(payload: UserSignupRequest):
                     email_clean,
                     payload.full_name.strip(),
                     hashed_pw,
-                    payload.role,
+                    enforced_role,
                     payload.branch.strip() if payload.branch else None,
                     payload.scholar_no.strip() if payload.scholar_no else None
                 )

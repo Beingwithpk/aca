@@ -996,3 +996,217 @@ async function confirmAndUploadBatch() {
     confirmText.textContent = "Confirm & Ingest Batch";
   }
 }
+
+
+// 1. Coming Soon Handler for Attendance Roster
+function showAttendanceComingSoon() {
+  const toast = document.getElementById("comingSoonToast");
+  if (!toast) {
+    alert("Attendance Roster: Coming Soon!");
+    return;
+  }
+  toast.classList.remove("hidden");
+  clearTimeout(window._toastTimer);
+  window._toastTimer = setTimeout(() => {
+    toast.classList.add("hidden");
+  }, 3500);
+}
+
+// 2. Tab Switcher (Academic Assistant vs Exam Paper Generator)
+function switchTab(tabName) {
+  // 1. Update Navigation Button Active States
+  const tabMap = {
+    chat: document.getElementById("tabChat"),
+    paper: document.getElementById("tabPaper"),
+    courses: document.getElementById("tabCourses"),
+  };
+
+  Object.entries(tabMap).forEach(([key, btn]) => {
+    if (!btn) return;
+    if (key === tabName) {
+      btn.className = "py-3 border-b-2 border-indigo-500 text-indigo-400 flex items-center space-x-2";
+    } else {
+      btn.className = "py-3 border-b-2 border-transparent text-slate-400 hover:text-slate-200 flex items-center space-x-2";
+    }
+  });
+
+  // 2. Toggle Main Content Sections
+  const viewMap = {
+    chat: document.getElementById("viewChat") || document.getElementById("chatSection"),
+    paper: document.getElementById("viewPaper") || document.getElementById("paperSection"),
+    courses: document.getElementById("viewCourses") || document.getElementById("coursesSection"),
+  };
+
+  Object.entries(viewMap).forEach(([key, section]) => {
+    if (!section) {
+      console.warn(`Missing container element for tab: ${key}`);
+      return;
+    }
+    section.classList.toggle("hidden", key !== tabName);
+  });
+}
+
+// Ensure global access for inline onclick="..." handlers
+window.switchTab = switchTab;
+
+// 3. Render Subject Knowledge Base with View & Download Buttons
+function renderCourseDocuments(documents) {
+  const listEl = document.getElementById("documentsList");
+  const isStaff =
+    window.currentUser &&
+    (window.currentUser.role === "admin" || window.currentUser.role === "faculty");
+
+  if (!documents || documents.length === 0) {
+    listEl.innerHTML = `<p class="text-slate-500 italic">No study material indexed for this subject yet.</p>`;
+    return;
+  }
+
+  listEl.innerHTML = documents
+    .map(
+      (doc) => `
+    <div class="bg-slate-900/90 border border-slate-800 hover:border-slate-700 rounded-lg p-2.5 flex items-center justify-between gap-2 transition">
+      <div class="min-w-0 flex-1">
+        <p class="text-slate-200 font-medium truncate text-xs" title="${doc.filename}">
+          <i class="fa-regular fa-file-pdf text-rose-400 mr-1.5"></i>${doc.filename}
+        </p>
+        <span class="inline-block mt-1 text-[10px] px-2 py-0.5 rounded bg-indigo-950 text-indigo-300 border border-indigo-800/50">
+          ${doc.doc_type}
+        </span>
+      </div>
+      <div class="flex items-center space-x-1.5 shrink-0">
+        <button 
+          onclick="openOrDownloadDoc('${doc.id}', false)" 
+          title="View PDF"
+          class="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-md transition"
+        >
+          <i class="fa-solid fa-eye text-[11px]"></i>
+        </button>
+        <button 
+          onclick="openOrDownloadDoc('${doc.id}', true)" 
+          title="Download PDF"
+          class="p-1.5 bg-indigo-600/20 hover:bg-indigo-600 text-indigo-300 hover:text-white rounded-md transition"
+        >
+          <i class="fa-solid fa-download text-[11px]"></i>
+        </button>
+        ${
+          isStaff
+            ? `<button 
+                onclick="deleteDocument('${doc.id}')" 
+                title="Delete Document"
+                class="admin-only-action p-1.5 bg-rose-600/20 hover:bg-rose-600 text-rose-300 hover:text-white rounded-md transition"
+              >
+                <i class="fa-solid fa-trash text-[11px]"></i>
+              </button>`
+            : ""
+        }
+      </div>
+    </div>
+  `
+    )
+    .join("");
+}
+
+// 4. Fetch Signed URL & Open/Download File
+async function openOrDownloadDoc(docId, forceDownload = false) {
+  try {
+    const token = localStorage.getItem("token") || localStorage.getItem("access_token");
+    const res = await fetch(`/api/documents/download/${docId}`, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "Unable to fetch file");
+
+    if (forceDownload) {
+      const a = document.createElement("a");
+      a.href = data.url;
+      a.download = data.filename || "material.pdf";
+      a.target = "_blank";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    } else {
+      window.open(data.url, "_blank", "noopener,noreferrer");
+    }
+  } catch (err) {
+    alert(`File error: ${err.message}`);
+  }
+}
+
+// 5. Role-based UI Visibility on Login
+window.currentUser = null;
+
+function applyRolePermissions(user) {
+  window.currentUser = user;
+  const isStaff = user && (user.role === "admin" || user.role === "faculty");
+
+  // 1. Manage Subjects Tab (Admin/Faculty ONLY)
+  const tabCourses = document.getElementById("tabCourses");
+  if (tabCourses) {
+    tabCourses.classList.toggle("hidden", !isStaff);
+  }
+
+  // 2. Document Upload Panel (Admin/Faculty ONLY)
+  const uploadContainer = document.getElementById("uploadContainer");
+  if (uploadContainer) {
+    uploadContainer.classList.toggle("hidden", !isStaff);
+  }
+
+  // 3. Delete buttons on existing documents (Admin/Faculty ONLY)
+  document.querySelectorAll(".admin-only-action").forEach((el) => {
+    el.classList.toggle("hidden", !isStaff);
+  });
+}
+
+function switchTab(tabName) {
+  const isStaff =
+    window.currentUser &&
+    (window.currentUser.role === "admin" || window.currentUser.role === "faculty");
+
+  // Block students from ever opening 'courses'
+  if (tabName === "courses" && !isStaff) {
+    console.warn("Access denied: Students cannot access Manage Subjects.");
+    return;
+  }
+
+  // 1. Update Navigation Button Active Styles (preserving 'hidden' for non-staff)
+  const tabMap = {
+    chat: document.getElementById("tabChat"),
+    paper: document.getElementById("tabPaper"),
+    courses: document.getElementById("tabCourses"),
+  };
+
+  Object.entries(tabMap).forEach(([key, btn]) => {
+    if (!btn) return;
+
+    const isActive = key === tabName;
+    btn.classList.toggle("border-indigo-500", isActive);
+    btn.classList.toggle("text-indigo-400", isActive);
+    btn.classList.toggle("border-transparent", !isActive);
+    btn.classList.toggle("text-slate-400", !isActive);
+    btn.classList.toggle("hover:text-slate-200", !isActive);
+
+    // Keep Manage Subjects hidden if user is a student
+    if (key === "courses") {
+      btn.classList.toggle("hidden", !isStaff);
+    }
+  });
+
+  // 2. Toggle Content Sections
+  const viewMap = {
+    chat: document.getElementById("viewChat") || document.getElementById("chatSection"),
+    paper: document.getElementById("viewPaper") || document.getElementById("paperSection"),
+    courses: document.getElementById("viewCourses") || document.getElementById("coursesSection"),
+  };
+
+  Object.entries(viewMap).forEach(([key, section]) => {
+    if (!section) return;
+    if (key === "courses" && !isStaff) {
+      section.classList.add("hidden");
+      return;
+    }
+    section.classList.toggle("hidden", key !== tabName);
+  });
+}
+
+window.switchTab = switchTab;
+window.applyRolePermissions = applyRolePermissions;
